@@ -1,0 +1,99 @@
+#Helm
+
+Bug in Latest Helm use 3.8 version
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+./get_helm.sh --version v3.8.2
+
+# Install AWS CLI
+
+apt update
+apt -y install awscli
+aws --version
+
+# Install Kubectl
+sudo apt-get install -y apt-transport-https ca-certificates curl
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+apt update
+
+apt-cache policy kubectl
+apt-get install -y kubectl=1.28.0-00
+kubectl version
+
+# Install EKSCTL Command Line
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+mv /tmp/eksctl /usr/local/bin
+
+eksctl create cluster --name ec2-cluster --version 1.28 --region us-east-2 --managed --asg-access --external-dns-access --full-ecr-access --appmesh-access --alb-ingress-access
+
+eksctl create cluster --name fargate-cluster --version 1.29 --region us-east-2 --fargate --alb-ingress-access
+
+
+aws eks update-kubeconfig --region us-east-2 --name fargate-cluster
+
+eksctl create fargateprofile --namespace nice --cluster eks-cluster --region us-east-2
+
+
+eksctl delete cluster --region=us-east-2 --name fargate-cluster 
+
+eksctl delete cluster --region=us-east-2 --name eks-cluster 
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/rbac-role.yaml
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: alb-ingress-controller
+  name: alb-ingress-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: alb-ingress-controller
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/name: alb-ingress-controller
+  name: alb-ingress-controller
+  namespace: kube-system
+...
+
+kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller//crds?ref=master"
+helm repo add eks https://aws.github.io/eks-charts
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system --set clusterName=fargate-cluster --set vpcId=vpc-0a0e50b2412b41cb3 --set region=us-east-2
+
+
+Add below tag to the subnets in VPC for EKS
+
+kubernetes.io/cluster/fargate-cluster	shared
+
+
+
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: fargate-cluster
+  region: us-east-2
+
+nodeGroups:
+  - name: ng-2
+    instanceType: m5.xlarge
+    desiredCapacity: 2
+    volumeSize: 100
+    ssh: # use existing EC2 key
+      publicKeyName: devopslabs
+
+
+ekstcl create cluster -f config.yaml
+
+
+eksctl create cluster --name eks-cluster --version 1.23 --region us-east-2
